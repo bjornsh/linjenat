@@ -1,21 +1,27 @@
 ---
-title: "R Notebook"
+title: "Hållplatser"
 output: html_notebook
 ---
 
-##### hpl data #####
+
+```{r}
 suppressMessages(library(httr))
 suppressMessages(library(rlist))
 suppressMessages(library(jsonlite))
 suppressMessages(library(dplyr))
+suppressMessages(library(leaflet))
+suppressMessages(library(leaflet.extras))
+```
 
+
+```{r}
 #### import API hpl data ####
 baseurl = "https://api.ul.se/api/v3/line/"
 linje = list()
 
-linje_list = c("1", "3")
+# linje_list = c("1", "3")
 
-for(i in 1:10){
+for(i in 1:200){
   ul = fromJSON(paste0(baseurl, i), flatten=TRUE)
   linje[[i+1]] <- cbind(ul$name, ul$pointsOnRoute)
 }
@@ -27,7 +33,22 @@ colnames(alla_linjer) = c("linje", "hpl_id", "hpl_namn", "area", "lat", "long")
 
 # extract kommun data
 alla_linjer$kommun_rebus = sub("\\).*", "", sub(".*\\(", "", alla_linjer$hpl_namn))
+```
 
 
-test 
-5+5
+```{r}
+leaflet(alla_linjer) %>% 
+  addTiles() %>% # add basemap
+  addMarkers(lat = ~lat, lng = ~long, popup = as.character(alla_linjer$hpl_id))
+```
+
+
+
+```{r}
+leaflet(alla_linjer) %>% # specify which shapefile to use
+  addTiles() %>% # add basemap
+  addWebGLHeatmap(lat = ~lat, lng = ~long, size = 3000)
+```
+
+
+
