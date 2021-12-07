@@ -1,0 +1,365 @@
+---
+title: "Linjenät"
+output: html_document
+---
+
+
+
+Syfte: Skapa ett linjenät med hjälp av Trafiklab GTFS data
+
+
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+#---------------------------------------------------------------------------------------------------
+# set up
+#---------------------------------------------------------------------------------------------------
+
+# clean
+rm(list = ls())
+invisible(gc())
+
+
+options(dplyr.summarise.inform = FALSE)
+
+knitr::opts_chunk$set(
+  echo       = FALSE,
+  message    = FALSE,
+  warning    = FALSE
+)
+
+# libraries
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse, sf, sp, httr, mapview)
+
+
+
+# avoid scientific notation
+options(scipen=999)
+
+
+# create directory
+wd = getwd()
+
+dir.create("data_input")
+dir.create("data_output")
+dir.create("output")
+dir.create("output/shapefiles")
+dir.create("output/karta_html")
+
+
+# sokväg
+data_input = paste0(wd,"/data_input")
+data_output = paste0(wd,"/data_output")
+output = paste0(wd,"/output")
+```
+
+
+```{r, input variables}
+
+### Define input variables
+
+rkm = "ul" # !!!!!! Specify RKM. Available values : sl, ul, sormland, otraf, krono, klt, gotland, blekinge, skane, halland, vt, varm, orebro, vl, dt, xt, dintur, sj
+
+lan_kod = "03" # !!!!!! Specify län kod, Uppsala = 03, Dalarna = 20
+
+
+# todays date, used as filter
+today = str_remove_all(Sys.Date(), "-")
+
+
+## Trafiklab key
+# api_fil <- read_file(paste0("Z:/api"))
+# trafiklab_key = gsub('^.*trafiklab_gtfsstatik: \\s*|\\s*\r.*$', "", api_fil)
+trafiklab_key = rstudioapi::askForPassword()
+
+```
+
+
+
+
+```{r results='hide'}
+#---------------------------------------------------------------------------------------------------
+# Fetch GTFS data 
+#---------------------------------------------------------------------------------------------------
+
+## static GTFS timetable data from Trafiklab
+url <- paste0("https://opendata.samtrafiken.se/gtfs/", rkm, "/", rkm, ".zip?key=", trafiklab_key)
+
+GET(url, write_disk(paste0(data_input, "/trafiklab_", rkm, ".zip"), overwrite=TRUE))
+
+unzip(paste0(data_input, "/trafiklab_", rkm, ".zip"), exdir = paste0(data_input, "/trafiklab_", rkm))
+
+```
+
+
+```{r, gtfs}
+
+#---------------------------------------------------------------------------------------------------
+# load data
+#---------------------------------------------------------------------------------------------------
+
+routes = read.csv2(paste0(data_input, "/trafiklab_", rkm, "/routes.txt"), 
+                   sep = ",", encoding="UTF-8", stringsAsFactors=FALSE)
+
+stops = read.csv2(paste0(data_input, "/trafiklab_", rkm, "/stops.txt"), 
+                  sep = ",", encoding="UTF-8", stringsAsFactors=FALSE)
+
+stop_times = read.csv2(paste0(data_input, "/trafiklab_", rkm, "/stop_times.txt"), 
+                       sep = ",", encoding="UTF-8", stringsAsFactors=FALSE)
+
+trips = read.csv2(paste0(data_input, "/trafiklab_", rkm, "/trips.txt"), 
+                  sep = ",", encoding="UTF-8", stringsAsFactors=FALSE)
+
+calendar_dates = read.csv2(paste0(data_input, "/trafiklab_", rkm, "/calendar_dates.txt"), 
+                           sep = ",", encoding="UTF-8", stringsAsFactors=FALSE)
+
+# linjenät koordinater
+shapes = read.csv2(paste0(data_input, "/trafiklab_", rkm, "/shapes.txt"), 
+                           sep = ",", encoding="UTF-8", stringsAsFactors=FALSE)
+
+### Create filter variables
+
+# service_id för rätt datum
+service_id_inklud = calendar_dates %>% filter(date == today) %>% select(service_id) %>% pull()
+
+# trips för rätt datum
+trips_inklud = trips %>% filter(service_id %in% service_id_inklud) %>% select(trip_id) %>% pull()
+
+
+
+
+#---------------------------------------------------------------------------------------------------
+# Merge gtfs tables
+#---------------------------------------------------------------------------------------------------
+
+gtfs = stop_times %>%  
+  left_join(., trips, by = "trip_id") %>%
+  left_join(., stops, by = "stop_id") %>%
+  left_join(., routes, by = "route_id") %>%
+  mutate(hpl_id = substr(stop_id, 8, 13)) %>% 
+  filter(trip_id %in% trips_inklud) %>%  # remove all rows referring to other dates
+  distinct(arrival_time, departure_time, stop_id, .keep_all= TRUE) # remove duplicates
+```
+
+
+```{r, stops}
+#---------------------------------------------------------------------------------------------------
+# Data hantering - hållplatser
+#---------------------------------------------------------------------------------------------------
+
+# antal avgånger per hållplats
+antal_departure = gtfs %>% 
+  group_by(hpl_id) %>% 
+  summarise(antal_dep = n())
+
+# antal linjer som trafikerar en hållplats
+antal_linjer = gtfs %>% 
+  distinct(hpl_id, route_short_name) %>% 
+  group_by(hpl_id) %>% 
+  summarise(antal_linjer = n())
+
+
+## Tidtabelldata är på hållplatslägenivå. Ta medel för att skapa en koordinat per hållplats
+hpl_koord = gtfs %>% 
+  group_by(hpl_id, stop_name) %>% 
+  summarise(lat = round(mean(as.numeric(stop_lat)), 5), lon = round(mean(as.numeric(stop_lon)), 5)) %>% 
+  ungroup() %>% 
+  left_join(antal_departure, by = "hpl_id") %>% 
+  left_join(antal_linjer, by = "hpl_id") %>% 
+  mutate(antal_dep_log = log10(as.numeric(antal_dep)))
+
+# create SF object för alla hållplatser (vanligaste körväg)
+xy_gtfs = hpl_koord[,c("lon", "lat")]
+
+spdf <- SpatialPointsDataFrame(coords = xy_gtfs, data = hpl_koord) # create spatial points
+
+spdf1 = st_as_sf(spdf) %>% # convert to sf object
+  st_set_crs(4326) %>% # set WGS84 as CRS
+  st_transform(3006) # convert to SWEREF99
+
+```
+
+
+**Alla linjer (vanligaste körväg)**
+
+```{r network}
+### En linje kan ha fler olika körvägar. Identifiera den vanligaste vägsträckan per linje
+line_shapeid = gtfs %>% 
+  group_by(route_short_name, shape_id) %>% 
+  summarise(n = n()) %>% 
+  filter(n == max(n)) %>% # filtrera bort alla planerade körväger utom den mest frekventa 
+  ungroup() %>% 
+  select(-n)
+
+# vektor med shape_id för vanligaste körvägar (en per linje)
+shapeid_inklud = line_shapeid %>% select(shape_id) %>% pull()
+
+
+# create SF object
+xy_shapes = shapes %>%
+  filter(shape_id %in% shapeid_inklud) %>% 
+  select("shape_pt_lon", "shape_pt_lat") %>% 
+  mutate_if(is.character,as.numeric)
+
+# create spatial points från körvägskoordinater
+sp_shapes <- SpatialPointsDataFrame(coords = xy_shapes, 
+                                    data = filter(shapes,shape_id %in% shapeid_inklud)) # must be same nrow as xy_shapes
+
+
+# convert to sf object
+sp_shapes1 = st_as_sf(sp_shapes) %>% 
+#  filter(shape_id == "1" | shape_id == "3") %>% # CREATE TEST DATA
+  st_set_crs(4326) %>% # set WGS84 as CRS
+  st_transform(3006) # convert to SWEREF99
+
+
+# skapa linjer från körvägskoordinater
+all_lines = sp_shapes1 %>% 
+  group_by(shape_id) %>% 
+  summarise(do_union = FALSE) %>% 
+  st_cast("LINESTRING") %>% 
+  left_join(., line_shapeid, by = "shape_id")
+
+
+
+### skapa karta
+karta_alla_linjer = mapview(all_lines, legend = FALSE)
+
+# spara karta som html fil
+mapshot(karta_alla_linjer, url = paste0("output/karta_html/karta_alla_linjer_", Sys.Date(), ".html"))
+
+karta_alla_linjer
+
+```
+
+&nbsp;
+
+**Karta med alla linjer (mest frekvanta körvägar) och tillhörande hållplatser.** 
+
+```{r, hpl karta}
+karta_alla_linjer_hpl = mapview(all_lines, legend = FALSE) + 
+  mapview(spdf1, legend = FALSE)
+
+# spara karta som html fil
+mapshot(karta_alla_linjer_hpl, url = paste0(output, "/karta_html/karta_alla_linjer_hpl_", Sys.Date(), ".html"))
+
+karta_alla_linjer_hpl
+```
+
+&nbsp;
+
+**Karta med stora linjer (>10 turer per vardagsdygn)**
+
+```{r, stora linjer}
+### identifiera stora linjer (> 10 turer per vardagsdygn) och skapa en vektor med linje namn
+linjer_inklud = gtfs %>% 
+  mutate(concat = paste0(route_short_name, "_", trip_id)) %>% 
+  select(concat) %>%
+  distinct() %>% 
+  mutate(linje = gsub("_.*","",concat)) %>% 
+  group_by(linje) %>% 
+  summarise(n = n()) %>% 
+  arrange(n) %>% 
+  filter(n>10) %>% # bestäm min antal turer per dygn
+  select(linje) %>% 
+  pull()
+
+
+### Tidtabelldata är på hållplatslägenivå. Ta medel för att skapa en koordinat per hållplats
+hpl_koord_stora_linjer = gtfs %>% 
+  # filtrera bort alla körvägar som inte är "vanligast"
+  filter(shape_id %in% shapeid_inklud) %>% 
+  # filtrera bort alla linjer med mindre än 10 turer per vardagsdygn
+  filter(route_short_name %in% linjer_inklud) %>% 
+  # skapa hållplats centerkoordinat för linjer och körvägar som finns kvar
+  group_by(hpl_id, stop_name) %>% 
+  summarise(lat = round(mean(as.numeric(stop_lat)), 5), lon = round(mean(as.numeric(stop_lon)), 5)) %>% 
+  ungroup() 
+
+
+
+### create SF object för hållplatser
+# skapa df med xy koordinater
+xy_hpl_koord_stora_linjer = hpl_koord_stora_linjer[,c("lon", "lat")]
+
+# create spatial points från xy koordinater
+sf_hpl_koord_stora_linjer = SpatialPointsDataFrame(coords = xy_hpl_koord_stora_linjer, 
+                                                   data = hpl_koord_stora_linjer) %>% 
+  # convert to sf object
+  st_as_sf(.) %>% 
+  st_set_crs(4326) %>% # set WGS84 as original CRS
+  st_transform(3006) # convert to SWEREF99
+
+
+
+### create SF object för körvägar av stora linjer  
+sf_stora_linjer = sp_shapes1 %>% 
+  # skapa linjenät
+  group_by(shape_id) %>% 
+  summarise(do_union = FALSE) %>% 
+  st_cast("LINESTRING") %>% 
+  # filtrera bort linjer med mindre än X turer
+  left_join(., line_shapeid, by = "shape_id") %>% 
+  filter(route_short_name %in% linjer_inklud)
+
+
+karta_stora_linjer = mapview(sf_stora_linjer, legend = FALSE)
+
+# spara karta som html fil
+mapshot(karta_stora_linjer, url = paste0(output, "/karta_html/karta_stora_linjer_", Sys.Date(), ".html"))
+
+# print
+karta_stora_linjer
+
+```
+
+&nbsp;
+
+**Linjer med > 10 turer per vardagsdygn (vanligaste körväg) och tillhörande hållplatser**
+
+```{r, karta_stora_linjer}
+karta_stora_linjer_hpl = mapview(sf_stora_linjer, legend = FALSE) + 
+  mapview(sf_hpl_koord_stora_linjer, legend = FALSE)
+
+mapshot(karta_stora_linjer_hpl, url = paste0(output, "/karta_html/karta_stora_linjer_hpl_", Sys.Date(), ".html"))
+
+karta_stora_linjer_hpl
+```
+
+
+
+
+
+
+```{r, spara_shapefiler, results='hide'}
+##### spara SF som shapefil med datum i filnamn
+
+# alla linjer 
+all_lines %>% 
+  rename(linje_nr = route_short_name) %>% 
+  st_write(., paste0(output, "/shapefiles/alla_linjer_", Sys.Date(), ".shp"))
+
+# stora linjer
+sf_stora_linjer %>% 
+  rename(linje_nr = route_short_name) %>% 
+  st_write(., paste0(output, "/shapefiles/alla_stora_linjer_", Sys.Date(), ".shp"))
+
+# alla hållplatser
+spdf1 %>% 
+  st_write(., paste0(output, "/shapefiles/hpl_alla_linjer_", Sys.Date(), ".shp"))
+
+# hållplatser av stora linjer
+sf_hpl_koord_stora_linjer %>% 
+  st_write(., paste0(output, "/shapefiles/hpl_stora_linjer_", Sys.Date(), ".shp"))
+
+```
+
+
+
+
+
+
+
+
+
+
