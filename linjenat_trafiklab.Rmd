@@ -58,9 +58,9 @@ output = paste0(wd,"/output")
 
 ### Define input variables
 
-rkm = "ul" # !!!!!! Specify RKM. Available values : sl, ul, sormland, otraf, krono, klt, gotland, blekinge, skane, halland, vt, varm, orebro, vl, dt, xt, dintur, sj
+rkm = "dt" # !!!!!! Specify RKM. Available values : sl, ul, sormland, otraf, krono, klt, gotland, blekinge, skane, halland, vt, varm, orebro, vl, dt, xt, dintur, sj
 
-lan_kod = "03" # !!!!!! Specify län kod, Uppsala = 03, Dalarna = 20
+lan_kod = "20" # !!!!!! Specify län kod, Uppsala = 03, Dalarna = 20
 
 
 # todays date, used as filter
@@ -68,9 +68,9 @@ today = str_remove_all(Sys.Date(), "-")
 
 
 ## Trafiklab key
-# api_fil <- read_file(paste0("Z:/api"))
-# trafiklab_key = gsub('^.*trafiklab_gtfsstatik: \\s*|\\s*\r.*$', "", api_fil)
-trafiklab_key = rstudioapi::askForPassword()
+api_fil <- read_file(paste0("Z:/api"))
+trafiklab_key = gsub('^.*trafiklab_gtfsstatik: \\s*|\\s*\r.*$', "", api_fil)
+# trafiklab_key = rstudioapi::askForPassword()
 
 ```
 
@@ -226,7 +226,8 @@ all_lines = sp_shapes1 %>%
 karta_alla_linjer = mapview(all_lines, legend = FALSE)
 
 # spara karta som html fil
-mapshot(karta_alla_linjer, url = paste0("output/karta_html/karta_alla_linjer_", Sys.Date(), ".html"))
+mapshot(karta_alla_linjer, url = paste0("output/karta_html/karta_alla_linjer_", 
+                                        rkm, "_", Sys.Date(), ".html"))
 
 karta_alla_linjer
 
@@ -241,7 +242,8 @@ karta_alla_linjer_hpl = mapview(all_lines, legend = FALSE) +
   mapview(spdf1, legend = FALSE)
 
 # spara karta som html fil
-mapshot(karta_alla_linjer_hpl, url = paste0(output, "/karta_html/karta_alla_linjer_hpl_", Sys.Date(), ".html"))
+mapshot(karta_alla_linjer_hpl, url = paste0(output, "/karta_html/karta_alla_linjer_hpl_", 
+                                            rkm, "_", Sys.Date(), ".html"))
 
 karta_alla_linjer_hpl
 ```
@@ -306,7 +308,8 @@ sf_stora_linjer = sp_shapes1 %>%
 karta_stora_linjer = mapview(sf_stora_linjer, legend = FALSE)
 
 # spara karta som html fil
-mapshot(karta_stora_linjer, url = paste0(output, "/karta_html/karta_stora_linjer_", Sys.Date(), ".html"))
+mapshot(karta_stora_linjer, url = paste0(output, "/karta_html/karta_stora_linjer_", 
+                                         rkm, "_", Sys.Date(), ".html"))
 
 # print
 karta_stora_linjer
@@ -321,7 +324,8 @@ karta_stora_linjer
 karta_stora_linjer_hpl = mapview(sf_stora_linjer, legend = FALSE) + 
   mapview(sf_hpl_koord_stora_linjer, legend = FALSE)
 
-mapshot(karta_stora_linjer_hpl, url = paste0(output, "/karta_html/karta_stora_linjer_hpl_", Sys.Date(), ".html"))
+mapshot(karta_stora_linjer_hpl, url = paste0(output, "/karta_html/karta_stora_linjer_hpl_", 
+                                             rkm, "_", Sys.Date(), ".html"))
 
 karta_stora_linjer_hpl
 ```
@@ -337,20 +341,20 @@ karta_stora_linjer_hpl
 # alla linjer 
 all_lines %>% 
   rename(linje_nr = route_short_name) %>% 
-  st_write(., paste0(output, "/shapefiles/alla_linjer_", Sys.Date(), ".shp"))
+  st_write(., paste0(output, "/shapefiles/alla_linjer_", rkm, "_", Sys.Date(), ".shp"))
 
 # stora linjer
 sf_stora_linjer %>% 
   rename(linje_nr = route_short_name) %>% 
-  st_write(., paste0(output, "/shapefiles/alla_stora_linjer_", Sys.Date(), ".shp"))
+  st_write(., paste0(output, "/shapefiles/alla_stora_linjer_", rkm, "_", Sys.Date(), ".shp"))
 
 # alla hållplatser
 spdf1 %>% 
-  st_write(., paste0(output, "/shapefiles/hpl_alla_linjer_", Sys.Date(), ".shp"))
+  st_write(., paste0(output, "/shapefiles/hpl_alla_linjer_", rkm, "_", Sys.Date(), ".shp"))
 
 # hållplatser av stora linjer
 sf_hpl_koord_stora_linjer %>% 
-  st_write(., paste0(output, "/shapefiles/hpl_stora_linjer_", Sys.Date(), ".shp"))
+  st_write(., paste0(output, "/shapefiles/hpl_stora_linjer_", rkm, "_", Sys.Date(), ".shp"))
 
 ```
 
